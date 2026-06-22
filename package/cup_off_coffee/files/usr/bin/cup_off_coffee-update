@@ -1,0 +1,186 @@
+#!/bin/sh
+
+UCI_CONFIG="podkop"
+UCI_OPTION="urltest_proxy_links"
+CONFIG_FILE="/etc/config/podkop"
+LOCK_DIR="/tmp/cup_off_coffee.lock"
+TMP_DIR="/tmp/cup_off_coffee.$$"
+
+log() {
+	echo "[cup_off_coffee] $*"
+	logger -t cup_off_coffee "$*" 2>/dev/null || true
+}
+
+cleanup() {
+	rm -rf "$TMP_DIR"
+	rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+restore_backup() {
+	log "Podkop configuration update failed; restoring backup"
+	uci -q revert "$UCI_CONFIG" 2>/dev/null || true
+	cp -p "$TMP_DIR/podkop.backup" "$CONFIG_FILE" || return 1
+}
+
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+	log "update is already running"
+	exit 1
+fi
+
+mkdir -p "$TMP_DIR" || exit 1
+
+SUBSCRIPTION_URL="${1:-$(uci -q get cup_off_coffee.main.url)}"
+if [ -z "$SUBSCRIPTION_URL" ]; then
+	log "subscription URL is not configured"
+	exit 1
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+	log "$CONFIG_FILE does not exist; is Podkop installed?"
+	exit 1
+fi
+
+B64_FILE="$TMP_DIR/subscription.b64"
+DECODED_FILE="$TMP_DIR/subscription.txt"
+JSON_FILE="$TMP_DIR/subscription.json"
+LINKS_FILE="$TMP_DIR/proxy-links.txt"
+HY2_FILE="$TMP_DIR/hysteria2-links.txt"
+ORDERED_FILE="$TMP_DIR/proxy-links-ordered.txt"
+SECTIONS_FILE="$TMP_DIR/podkop-sections.txt"
+
+log "downloading subscription"
+if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$B64_FILE" -- "$SUBSCRIPTION_URL"; then
+	log "download failed; configuration was not changed"
+	exit 1
+fi
+
+if [ ! -s "$B64_FILE" ]; then
+	log "server returned an empty response; configuration was not changed"
+	exit 1
+fi
+
+if ! tr -d '\r\n\t ' < "$B64_FILE" | base64 -d > "$DECODED_FILE" 2>"$TMP_DIR/base64.err"; then
+	log "response is not valid Base64; configuration was not changed"
+	exit 1
+fi
+
+awk '{ sub(/\r$/, ""); if ($0 ~ /^vless:\/\//) print }' \
+	"$DECODED_FILE" > "$LINKS_FILE"
+
+if [ ! -s "$LINKS_FILE" ]; then
+	log "subscription contains no VLESS links; configuration was not changed"
+	exit 1
+fi
+
+log "downloading JSON subscription for Hysteria2 links"
+if ! curl -fsSL --connect-timeout 15 --max-time 60 \
+	-A 'Happ/1.0' \
+	-H 'X-Device-OS: android' \
+	-H 'Accept: application/json' \
+	-o "$JSON_FILE" -- "$SUBSCRIPTION_URL"; then
+	log "JSON download failed; configuration was not changed"
+	exit 1
+fi
+
+if ! jq -r '
+	def configurations:
+		if type == "array" then .[]
+		elif type == "object" then .
+		else empty
+		end;
+
+	configurations
+	| .outbounds[]?
+	| select(.protocol == "hysteria" or .protocol == "hysteria2")
+	| (.settings.address // empty) as $address
+	| (.settings.port // 443) as $port
+	| (.streamSettings.hysteriaSettings.auth // .settings.auth // empty) as $auth
+	| (.streamSettings.tlsSettings.serverName
+		// .streamSettings.tlsSettings.serverNames[0]
+		// $address) as $sni
+	| (.streamSettings.tlsSettings.allowInsecure // false) as $insecure
+	| (.tag // "Hysteria2") as $remark
+	| select(($address | type) == "string" and $address != "")
+	| select(($auth | type) == "string" and $auth != "")
+	| (if $address | contains(":") then "[\($address)]" else $address end) as $host
+	| "hy2://\($auth | @uri)@\($host):\($port)/?sni=\($sni | tostring | @uri)&insecure=\(if $insecure then "1" else "0" end)#\($remark | tostring | @uri)"
+' "$JSON_FILE" > "$HY2_FILE"; then
+	log "response is not valid supported JSON; configuration was not changed"
+	exit 1
+fi
+
+cat "$HY2_FILE" >> "$LINKS_FILE"
+
+awk '
+{
+	pos = index($0, "#")
+	name = pos ? substr($0, pos + 1) : ""
+	if (tolower(name) ~ /youtube/ && !seen[$0]++) print
+}' "$LINKS_FILE" > "$ORDERED_FILE"
+
+awk '
+{
+	pos = index($0, "#")
+	name = pos ? substr($0, pos + 1) : ""
+	if (tolower(name) !~ /youtube/ && !seen[$0]++) print
+}' "$LINKS_FILE" >> "$ORDERED_FILE"
+
+LINK_COUNT="$(wc -l < "$ORDERED_FILE" | tr -d ' ')"
+HY2_COUNT="$(wc -l < "$HY2_FILE" | tr -d ' ')"
+YOUTUBE_COUNT="$(awk '{ pos=index($0,"#"); name=pos?substr($0,pos+1):""; if (tolower(name) ~ /youtube/) count++ } END { print count+0 }' "$ORDERED_FILE")"
+
+# Podkop proxy profiles are UCI sections of type "section". Update every one
+# so all profiles receive the same ordered subscription list.
+. /lib/functions.sh
+collect_section() {
+	printf '%s\n' "$1" >> "$SECTIONS_FILE"
+}
+config_load "$UCI_CONFIG"
+config_foreach collect_section section
+
+if [ ! -s "$SECTIONS_FILE" ]; then
+	log "Podkop contains no sections of type 'section'; configuration was not changed"
+	exit 1
+fi
+
+SECTION_COUNT="$(wc -l < "$SECTIONS_FILE" | tr -d ' ')"
+
+if ! cp -p "$CONFIG_FILE" "$TMP_DIR/podkop.backup"; then
+	log "could not back up $CONFIG_FILE"
+	exit 1
+fi
+
+while IFS= read -r section; do
+	[ -n "$section" ] || continue
+	uci -q delete "$UCI_CONFIG.$section.$UCI_OPTION" 2>/dev/null || true
+
+	while IFS= read -r link; do
+		[ -n "$link" ] || continue
+		if ! uci add_list "$UCI_CONFIG.$section.$UCI_OPTION=$link"; then
+			restore_backup
+			exit 1
+		fi
+	done < "$ORDERED_FILE"
+done < "$SECTIONS_FILE"
+
+if ! uci commit "$UCI_CONFIG"; then
+	restore_backup
+	exit 1
+fi
+
+if [ -x /etc/init.d/podkop ]; then
+	if ! /etc/init.d/podkop restart; then
+		log "Podkop restart failed; restoring previous configuration"
+		restore_backup
+		/etc/init.d/podkop restart 2>/dev/null || true
+		exit 1
+	fi
+else
+	log "warning: /etc/init.d/podkop not found; configuration changed without restart"
+fi
+
+log "done: installed $LINK_COUNT links in $SECTION_COUNT sections; Hysteria2 links: $HY2_COUNT; YouTube links first: $YOUTUBE_COUNT"
+exit 0

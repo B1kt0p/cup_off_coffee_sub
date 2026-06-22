@@ -1,0 +1,5 @@
+config subscription 'main'
+	option enabled '0'
+	option url ''
+	option update_times '05:00'
+	option run_on_start '1'

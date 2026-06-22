@@ -1,0 +1,14 @@
+{
+	"luci-app-cup-off-coffee": {
+		"description": "Configure cup_off_coffee",
+		"read": {
+			"uci": [ "cup_off_coffee" ]
+		},
+		"write": {
+			"uci": [ "cup_off_coffee" ],
+			"file": {
+				"/usr/bin/cup_off_coffee-update": [ "exec" ]
+			}
+		}
+	}
+}

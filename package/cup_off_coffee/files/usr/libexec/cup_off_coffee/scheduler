@@ -1,0 +1,38 @@
+#!/bin/sh
+
+TAG="cup_off_coffee"
+LAST_RUN_FILE="/tmp/cup_off_coffee.last_schedule"
+
+log() {
+	logger -t "$TAG" "$*"
+}
+
+run_on_start="$(uci -q get cup_off_coffee.main.run_on_start)"
+[ "$run_on_start" = "1" ] && /usr/bin/cup_off_coffee-update
+
+while :; do
+	enabled="$(uci -q get cup_off_coffee.main.enabled)"
+	if [ "$enabled" != "1" ]; then
+		log "automatic updates disabled, stopping scheduler"
+		exit 0
+	fi
+
+	now="$(date +%H:%M)"
+	today="$(date +%Y-%m-%d)"
+	schedule="$(uci -q get cup_off_coffee.main.update_times)"
+	[ -n "$schedule" ] || schedule="05:00"
+
+	for update_time in $schedule; do
+		[ "$now" = "$update_time" ] || continue
+
+		run_key="$today $update_time"
+		last_run="$(cat "$LAST_RUN_FILE" 2>/dev/null)"
+		[ "$last_run" = "$run_key" ] && break
+
+		printf '%s\n' "$run_key" > "$LAST_RUN_FILE"
+		/usr/bin/cup_off_coffee-update
+		break
+	done
+
+	sleep 20 || exit 0
+done
