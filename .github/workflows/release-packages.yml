@@ -53,6 +53,7 @@ jobs:
             OPENWRT_25_VERSION="${{ matrix.openwrt_version }}" \
             TARGET="${{ matrix.target }}" \
             SUBTARGET="${{ matrix.subtarget }}" \
+            BUILD_JOBS=1 \
             DIST_DIR="$PWD/dist/${{ matrix.platform_name }}"
 
       - name: Prepare release assets

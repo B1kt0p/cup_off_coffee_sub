@@ -4,6 +4,7 @@ TARGET ?= x86
 SUBTARGET ?= 64
 DOCKER ?= docker
 DOCKER_PLATFORM ?= linux/amd64
+BUILD_JOBS ?= 1
 DIST_DIR ?= $(CURDIR)/dist
 
 .PHONY: all build-24.10 build-25.12 clean
@@ -17,6 +18,7 @@ build-24.10:
 		--build-arg OPENWRT_VERSION=$(OPENWRT_24_VERSION) \
 		--build-arg TARGET=$(TARGET) \
 		--build-arg SUBTARGET=$(SUBTARGET) \
+		--build-arg BUILD_JOBS=$(BUILD_JOBS) \
 		-t cup-off-coffee-builder:$(OPENWRT_24_VERSION)-$(TARGET)-$(SUBTARGET) .
 	mkdir -p $(DIST_DIR)/$(OPENWRT_24_VERSION)
 	rm -f $(DIST_DIR)/$(OPENWRT_24_VERSION)/cup_off_coffee_*.ipk \
@@ -33,6 +35,7 @@ build-25.12:
 		--build-arg OPENWRT_VERSION=$(OPENWRT_25_VERSION) \
 		--build-arg TARGET=$(TARGET) \
 		--build-arg SUBTARGET=$(SUBTARGET) \
+		--build-arg BUILD_JOBS=$(BUILD_JOBS) \
 		-t cup-off-coffee-builder:$(OPENWRT_25_VERSION)-$(TARGET)-$(SUBTARGET) .
 	mkdir -p $(DIST_DIR)/$(OPENWRT_25_VERSION)
 	rm -f $(DIST_DIR)/$(OPENWRT_25_VERSION)/cup_off_coffee-*.apk \
