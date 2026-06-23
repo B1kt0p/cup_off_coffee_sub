@@ -2,10 +2,11 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=cup_off_coffee
 PKG_VERSION:=1.1.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=cup_off_coffee maintainers
 PKGARCH:=all
+EXTRA_DEPENDS:=uclient-fetch (>=0), ca-bundle (>=0), coreutils-base64 (>=0), jq (>=0)
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -13,7 +14,6 @@ define Package/cup_off_coffee
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Remnawave subscription updater for Podkop
-  DEPENDS:=+uclient-fetch +ca-bundle +coreutils-base64 +jq
 endef
 
 define Package/cup_off_coffee/description

@@ -122,37 +122,40 @@ if [ ! -s "$LINKS_FILE" ]; then
 	exit 1
 fi
 
-log "downloading JSON subscription for Hysteria2 links"
-if ! download_subscription "$JSON_FILE" json; then
-	log "JSON download failed; configuration was not changed"
-	exit 1
-fi
+if command -v jq >/dev/null 2>&1; then
+	log "downloading JSON subscription for Hysteria2 links"
+	if ! download_subscription "$JSON_FILE" json; then
+		log "JSON download failed; continuing without Hysteria2 links"
+		: > "$HY2_FILE"
+	elif ! jq -r '
+		def configurations:
+			if type == "array" then .[]
+			elif type == "object" then .
+			else empty
+			end;
 
-if ! jq -r '
-	def configurations:
-		if type == "array" then .[]
-		elif type == "object" then .
-		else empty
-		end;
-
-	configurations
-	| .outbounds[]?
-	| select(.protocol == "hysteria" or .protocol == "hysteria2")
-	| (.settings.address // empty) as $address
-	| (.settings.port // 443) as $port
-	| (.streamSettings.hysteriaSettings.auth // .settings.auth // empty) as $auth
-	| (.streamSettings.tlsSettings.serverName
-		// .streamSettings.tlsSettings.serverNames[0]
-		// $address) as $sni
-	| (.streamSettings.tlsSettings.allowInsecure // false) as $insecure
-	| (.tag // "Hysteria2") as $remark
-	| select(($address | type) == "string" and $address != "")
-	| select(($auth | type) == "string" and $auth != "")
-	| (if $address | contains(":") then "[\($address)]" else $address end) as $host
-	| "hy2://\($auth | @uri)@\($host):\($port)/?sni=\($sni | tostring | @uri)&insecure=\(if $insecure then "1" else "0" end)#\($remark | tostring | @uri)"
-' "$JSON_FILE" > "$HY2_FILE"; then
-	log "response is not valid supported JSON; configuration was not changed"
-	exit 1
+		configurations
+		| .outbounds[]?
+		| select(.protocol == "hysteria" or .protocol == "hysteria2")
+		| (.settings.address // empty) as $address
+		| (.settings.port // 443) as $port
+		| (.streamSettings.hysteriaSettings.auth // .settings.auth // empty) as $auth
+		| (.streamSettings.tlsSettings.serverName
+			// .streamSettings.tlsSettings.serverNames[0]
+			// $address) as $sni
+		| (.streamSettings.tlsSettings.allowInsecure // false) as $insecure
+		| (.tag // "Hysteria2") as $remark
+		| select(($address | type) == "string" and $address != "")
+		| select(($auth | type) == "string" and $auth != "")
+		| (if $address | contains(":") then "[\($address)]" else $address end) as $host
+		| "hy2://\($auth | @uri)@\($host):\($port)/?sni=\($sni | tostring | @uri)&insecure=\(if $insecure then "1" else "0" end)#\($remark | tostring | @uri)"
+	' "$JSON_FILE" > "$HY2_FILE"; then
+		log "response is not valid supported JSON; continuing without Hysteria2 links"
+		: > "$HY2_FILE"
+	fi
+else
+	log "jq is not installed; continuing without Hysteria2 links"
+	: > "$HY2_FILE"
 fi
 
 cat "$HY2_FILE" >> "$LINKS_FILE"
