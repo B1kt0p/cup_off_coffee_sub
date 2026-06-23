@@ -1,0 +1,100 @@
+name: Build and publish packages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: OpenWrt ${{ matrix.openwrt_line }} / ${{ matrix.platform_name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - openwrt_line: "24.10"
+            make_target: build-24.10
+            openwrt_version: "24.10.7"
+            target: x86
+            subtarget: "64"
+            platform_name: x86_64
+          - openwrt_line: "24.10"
+            make_target: build-24.10
+            openwrt_version: "24.10.7"
+            target: mediatek
+            subtarget: filogic
+            platform_name: mediatek-aarch64
+          - openwrt_line: "25.12"
+            make_target: build-25.12
+            openwrt_version: "25.12.4"
+            target: x86
+            subtarget: "64"
+            platform_name: x86_64
+          - openwrt_line: "25.12"
+            make_target: build-25.12
+            openwrt_version: "25.12.4"
+            target: mediatek
+            subtarget: filogic
+            platform_name: mediatek-aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build packages
+        run: |
+          make "${{ matrix.make_target }}" \
+            OPENWRT_24_VERSION="${{ matrix.openwrt_version }}" \
+            OPENWRT_25_VERSION="${{ matrix.openwrt_version }}" \
+            TARGET="${{ matrix.target }}" \
+            SUBTARGET="${{ matrix.subtarget }}" \
+            DIST_DIR="$PWD/dist/${{ matrix.platform_name }}"
+
+      - name: Prepare release assets
+        run: |
+          set -eu
+          mkdir -p release-assets
+          find "dist/${{ matrix.platform_name }}/${{ matrix.openwrt_version }}" \
+            -type f \( -name '*.ipk' -o -name '*.apk' \) \
+            -exec sh -c '
+              for file do
+                base=$(basename "$file")
+                cp "$file" "release-assets/openwrt-${{ matrix.openwrt_version }}-${{ matrix.platform_name }}-$base"
+              done
+            ' sh {} +
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.openwrt_version }}-${{ matrix.platform_name }}
+          path: release-assets/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: main-${{ github.run_number }}
+          name: Main build ${{ github.run_number }}
+          body: |
+            Automatic package build from main.
+
+            Commit: ${{ github.sha }}
+            Platforms: x86_64, mediatek-aarch64
+            OpenWrt: 24.10.7, 25.12.4
+          files: release-assets/*

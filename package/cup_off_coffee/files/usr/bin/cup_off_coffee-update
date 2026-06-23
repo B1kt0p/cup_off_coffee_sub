@@ -16,6 +16,53 @@ cleanup() {
 	rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 
+download_subscription() {
+	local output="$1"
+	local mode="${2:-base64}"
+
+	if command -v uclient-fetch >/dev/null 2>&1; then
+		if [ "$mode" = "json" ]; then
+			uclient-fetch -q -T 60 \
+				--user-agent='Happ/1.0' \
+				--header='X-Device-OS: android' \
+				--header='Accept: application/json' \
+				-O "$output" -- "$SUBSCRIPTION_URL"
+		else
+			uclient-fetch -q -T 60 -O "$output" -- "$SUBSCRIPTION_URL"
+		fi
+		return $?
+	fi
+
+	if command -v wget >/dev/null 2>&1; then
+		if [ "$mode" = "json" ]; then
+			wget -q -T 60 \
+				--user-agent='Happ/1.0' \
+				--header='X-Device-OS: android' \
+				--header='Accept: application/json' \
+				-O "$output" -- "$SUBSCRIPTION_URL"
+		else
+			wget -q -T 60 -O "$output" -- "$SUBSCRIPTION_URL"
+		fi
+		return $?
+	fi
+
+	if command -v curl >/dev/null 2>&1; then
+		if [ "$mode" = "json" ]; then
+			curl -fsSL --connect-timeout 15 --max-time 60 \
+				-A 'Happ/1.0' \
+				-H 'X-Device-OS: android' \
+				-H 'Accept: application/json' \
+				-o "$output" -- "$SUBSCRIPTION_URL"
+		else
+			curl -fsSL --connect-timeout 15 --max-time 60 -o "$output" -- "$SUBSCRIPTION_URL"
+		fi
+		return $?
+	fi
+
+	log "no downloader found; install uclient-fetch"
+	return 1
+}
+
 restore_backup() {
 	log "Podkop configuration update failed; restoring backup"
 	uci -q revert "$UCI_CONFIG" 2>/dev/null || true
@@ -52,7 +99,7 @@ ORDERED_FILE="$TMP_DIR/proxy-links-ordered.txt"
 SECTIONS_FILE="$TMP_DIR/podkop-sections.txt"
 
 log "downloading subscription"
-if ! curl -fsSL --connect-timeout 15 --max-time 60 -o "$B64_FILE" -- "$SUBSCRIPTION_URL"; then
+if ! download_subscription "$B64_FILE"; then
 	log "download failed; configuration was not changed"
 	exit 1
 fi
@@ -76,11 +123,7 @@ if [ ! -s "$LINKS_FILE" ]; then
 fi
 
 log "downloading JSON subscription for Hysteria2 links"
-if ! curl -fsSL --connect-timeout 15 --max-time 60 \
-	-A 'Happ/1.0' \
-	-H 'X-Device-OS: android' \
-	-H 'Accept: application/json' \
-	-o "$JSON_FILE" -- "$SUBSCRIPTION_URL"; then
+if ! download_subscription "$JSON_FILE" json; then
 	log "JSON download failed; configuration was not changed"
 	exit 1
 fi

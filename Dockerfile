@@ -22,7 +22,7 @@ RUN set -eux; \
 
 WORKDIR /sdk
 RUN ./scripts/feeds update -a && \
-	./scripts/feeds install luci-base curl coreutils-base64 jq
+	./scripts/feeds install luci-base coreutils-base64 jq
 
 COPY package/cup_off_coffee package/cup_off_coffee
 COPY package/luci-app-cup-off-coffee package/luci-app-cup-off-coffee
