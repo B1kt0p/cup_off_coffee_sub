@@ -21,8 +21,9 @@ RUN set -eux; \
 	rm /tmp/openwrt-sdk.tar.zst
 
 WORKDIR /sdk
-RUN ./scripts/feeds update -a && \
-	./scripts/feeds install luci-base coreutils-base64 jq
+RUN ./scripts/feeds update packages luci && \
+	./scripts/feeds install -p luci luci-base && \
+	./scripts/feeds install -p packages coreutils-base64 jq
 
 COPY package/cup_off_coffee package/cup_off_coffee
 COPY package/luci-app-cup-off-coffee package/luci-app-cup-off-coffee
